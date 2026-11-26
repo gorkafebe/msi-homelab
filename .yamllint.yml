@@ -1,0 +1,14 @@
+# yamllint settings for this repository (make lint, CI).
+extends: default
+rules:
+  # Compose and Grafana files are long and readable with comments.
+  line-length:
+    max: 140
+  # "on:" in GitHub workflows is a key, not a boolean.
+  truthy:
+    allowed-values: ["true", "false", "on"]
+  document-start: disable
+  comments:
+    min-spaces-from-content: 1
+ignore: |
+  stacks/garmin/vendor/
