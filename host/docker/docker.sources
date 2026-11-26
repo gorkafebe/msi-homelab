@@ -1,0 +1,13 @@
+# /etc/apt/sources.list.d/docker.sources
+#
+# Docker's official apt repository (https://docs.docker.com/engine/install/ubuntu/).
+# Replace the two placeholders with the output of:
+#   . /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"   (e.g. noble)
+#   dpkg --print-architecture                                           (e.g. amd64)
+# The key is downloaded first to /etc/apt/keyrings/docker.asc (runbook page 07).
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: <ubuntu-codename>
+Components: stable
+Architectures: <architecture>
+Signed-By: /etc/apt/keyrings/docker.asc

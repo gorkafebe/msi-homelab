@@ -1,0 +1,13 @@
+Add this kernel parameter to GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub,
+keeping the values already there, separated by a space:
+
+    consoleblank=60
+
+Example:  GRUB_CMDLINE_LINUX_DEFAULT="<existing values> consoleblank=60"
+
+Then:     sudo update-grub && sudo reboot
+
+Effect: the text console of the built-in screen turns off after 60 seconds
+without keyboard input (only matters with the lid open).
+Undo: remove the parameter, run update-grub again and reboot.
+Check: cat /sys/module/kernel/parameters/consoleblank   -> 60

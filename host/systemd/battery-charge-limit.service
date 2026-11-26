@@ -1,0 +1,26 @@
+# /etc/systemd/system/battery-charge-limit.service
+#
+# Writes the battery charge limit (60 %) at every boot. Needs the external
+# msi-ec driver (runbook page 09), which exposes the file below.
+# The embedded controller (EC) usually keeps the value across reboots by
+# itself; this unit covers the cases where it may not (cold boot with all
+# power removed, drained battery, BIOS update).
+#
+# Install:  sudo systemctl daemon-reload && sudo systemctl enable --now battery-charge-limit.service
+# Check:    systemctl status battery-charge-limit.service   (active (exited))
+#           cat /sys/class/power_supply/BAT1/charge_control_{start,end}_threshold   (50, 60)
+# Undo:     sudo systemctl disable --now battery-charge-limit.service && sudo rm <this file>
+[Unit]
+Description=Limit battery charge to 60 percent (msi-ec)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Wait up to 30 s for the driver's file (the module may load after this unit
+# starts), then write 60. "$$" is a literal "$" in a unit file. The start
+# threshold follows by itself (end - 10 = 50).
+ExecStart=/bin/sh -c 'for i in $$(seq 1 30); do [ -w /sys/class/power_supply/BAT1/charge_control_end_threshold ] && break; sleep 1; done; echo 60 > /sys/class/power_supply/BAT1/charge_control_end_threshold'
+
+[Install]
+WantedBy=multi-user.target

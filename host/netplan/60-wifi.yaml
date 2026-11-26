@@ -1,0 +1,17 @@
+# /etc/netplan/60-wifi.yaml  (mode 600: it holds the Wi-Fi password)
+#
+# Wi-Fi in its OWN file: netplan merges every file in /etc/netplan/, so the
+# installer's file for the cable (50-cloud-init.yaml) stays untouched.
+# Requires the wpasupplicant package (install it while the cable works).
+# Apply with `sudo netplan try` (reverts by itself after 120 s if you lose
+# the connection and do not confirm).
+network:
+  version: 2
+  wifis:
+    <wifi-interface>:          # e.g. wlo1; see `ip -br link`
+      dhcp4: true
+      optional: true           # boot does not wait for the Wi-Fi
+      # regulatory-domain: <CC>  # two-letter country code, only if 5 GHz networks are missing
+      access-points:
+        "<wifi-name>":
+          password: "<wifi-password>"
