@@ -269,8 +269,13 @@ services:
     volumes:
       # Grafana's own database (users, preferences). Survives "down".
       - grafana-data:/var/lib/grafana
-      # Datasource + dashboard provider definitions, read-only.
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # Datasource + dashboard provider definitions, read-only, mounted FILE by
+      # file into the image's own provisioning folders. Why not the whole
+      # folder: Docker cannot add a file inside a read-only bind mount, and the
+      # optional Garmin module (stacks/garmin/compose.garmin.yaml) adds its own
+      # datasource and dashboard provider next to these two.
+      - ./grafana/provisioning/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
+      - ./grafana/provisioning/dashboards/server.yaml:/etc/grafana/provisioning/dashboards/server.yaml:ro
       # The dashboard JSON files, read-only.
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
     depends_on:
