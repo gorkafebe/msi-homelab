@@ -1,0 +1,3 @@
+# Only dependency of the one-shot login container. The pinned, hashed
+# requirements.txt is generated from this file (see the header there).
+garminconnect==0.3.20
