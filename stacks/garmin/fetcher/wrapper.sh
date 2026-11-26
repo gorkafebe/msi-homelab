@@ -41,12 +41,27 @@ rm -f "$STATE"
 # them to the environment by mistake (the upstream code would use them).
 unset GARMINCONNECT_EMAIL GARMINCONNECT_BASE64_PASSWORD GARMINTOKENS
 
+# Every check below only looks at local files; a failing one holds without any
+# network traffic. The messages say which case it is, never what the file holds.
+# Folder first: if this user cannot enter it, neither the marker nor the token
+# file can be seen, and "missing" would be a misleading answer.
+if [ ! -d "$TOKEN_DIR" ] || [ ! -x "$TOKEN_DIR" ]; then
+  hold "token folder $TOKEN_DIR cannot be accessed by uid $(id -u) (permissions; it must belong to 1000)"
+fi
+
 if [ -e "$MARKER" ]; then
   hold "marker $MARKER present (a previous run stopped)"
 fi
 
-# The token file must parse and hold a DI access token and refresh token.
-# Checked locally with Python; nothing is printed from the file.
+if [ ! -e "$TOKEN_FILE" ]; then
+  hold "no token file at $TOKEN_FILE (do the first login once: docs/GARMIN.md)"
+fi
+if [ ! -r "$TOKEN_FILE" ]; then
+  hold "token file $TOKEN_FILE cannot be read by uid $(id -u) (permissions; it must belong to 1000, mode 600)"
+fi
+
+# The token file must parse and hold a DI access token, a refresh token and
+# the client id. Checked locally with Python; nothing is printed from the file.
 if ! python -I -c '
 import json, sys
 try:
@@ -57,7 +72,7 @@ except Exception:
 ok = isinstance(data, dict) and all(isinstance(data.get(k), str) and data.get(k) for k in ("di_token", "di_refresh_token", "di_client_id"))
 sys.exit(0 if ok else 1)
 ' "$TOKEN_FILE" 2>/dev/null; then
-  hold "no usable token file at $TOKEN_FILE (do the first login once: docs/GARMIN.md)"
+  hold "token file $TOKEN_FILE has invalid content (not JSON with di_token, di_refresh_token and di_client_id; do the first login again: docs/GARMIN.md)"
 fi
 
 log "token file present; starting the fetcher (stdin closed, no credentials in the environment)"

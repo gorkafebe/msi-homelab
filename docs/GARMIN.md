@@ -40,7 +40,7 @@ docker compose -p <project> --env-file ../../.env -f compose.yaml -f ../garmin/c
 docker compose -p <project> -f compose.yaml -f ../garmin/compose.garmin.yaml ps
 ```
 
-`garmin-fetch` will show **unhealthy** and log `HOLD: no usable token file`:
+`garmin-fetch` will show **unhealthy** and log `HOLD: no token file at ...`:
 correct — it waits for the first login and makes no request meanwhile.
 
 ## The first login — once, by hand
@@ -90,7 +90,7 @@ tokens asks for the password on the terminal; in a container with a restart
 policy that becomes a new attempt at every restart. Here a wrapper decides
 before the fetcher runs:
 
-1. no usable token file → **hold** (no network traffic at all);
+1. token folder not accessible, token file missing, unreadable (permissions: it must belong to uid 1000, mode 600) or with invalid content → **hold** with a message saying which (no network traffic at all);
 2. a hold marker from a previous stop → **hold**;
 3. otherwise run the fetcher with stdin closed and no credentials in the
    environment; if it ever exits — expired session, refused tokens, any error —
