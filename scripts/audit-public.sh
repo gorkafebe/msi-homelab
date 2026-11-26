@@ -98,11 +98,12 @@ scan_pattern() {
 scan_pattern "IPv4 address" \
   '(^|[^0-9.])((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])([^0-9.]|$)' \
   ':[^0-9]?(127\.[0-9.]+|0\.0\.0\.0|192\.0\.2\.[0-9]+|198\.51\.100\.[0-9]+|203\.0\.113\.[0-9]+)([^0-9.]|$)'
-# IPv6 with at least four groups or a "::" between hex groups. ::1 is allowed,
-# and so is the documentation prefix 2001:db8::/32.
+# IPv6 with at least four groups or a "::" between hex groups, as a whole word
+# (so "activityType::field" or "std::map" do not count). ::1 is allowed, and so
+# is the documentation prefix 2001:db8::/32.
 scan_pattern "IPv6 address" \
-  '([0-9a-fA-F]{1,4}:){4,7}[0-9a-fA-F]{1,4}|[0-9a-fA-F]{1,4}::[0-9a-fA-F]{1,4}' \
-  ':(2001:)?[dD][bB]8:'
+  '(^|[^0-9A-Za-z_:])(([0-9a-fA-F]{1,4}:){4,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,6}(:[0-9a-fA-F]{1,4}){1,6})([^0-9A-Za-z_]|$)' \
+  ':[^:]?(2001:)?[dD][bB]8:'
 scan_pattern "Tailscale MagicDNS name (*.ts.net)" '[A-Za-z0-9-]+\.ts\.net' ''
 scan_pattern "MAC address" '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' ''
 scan_pattern "e-mail address" \
