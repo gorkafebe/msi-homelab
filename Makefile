@@ -66,6 +66,7 @@ lint: ## ShellCheck, yamllint and JSON syntax (pinned images, no network)
 	@docker run --rm --network none -v "$(CURDIR):/src:ro" -w /src $(YAMLLINT_IMAGE) \
 	  yamllint -c .yamllint.yml .
 	@git ls-files '*.json' | while read -r f; do jq empty "$$f" || exit 1; done
+	@python3 -I scripts/check-links.py
 	@echo "lint ok"
 
 config: ## Validate the Compose files with .env.example (starts nothing)
