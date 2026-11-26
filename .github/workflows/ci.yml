@@ -1,0 +1,32 @@
+# Continuous integration: nothing here deploys or starts the real stacks.
+# Every action is pinned to a full commit SHA and every tool image to a digest,
+# so a moved tag upstream cannot change what runs here.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: ShellCheck, yamllint, JSON
+        run: make lint
+
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the audit also reads the whole history
+      - name: Public audit (tree and history)
+        # The private denylist only exists on the owner's machine; here the
+        # generic checks (addresses, e-mails, *.ts.net, MAC, gitleaks) run.
+        env:
+          AUDIT_ALLOW_NO_DENYLIST: "1"
+        run: scripts/audit-public.sh --all
