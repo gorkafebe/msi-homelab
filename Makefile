@@ -25,10 +25,15 @@ FORBIDDEN_PROJECTS := msi-monitor $(shell grep -v '^\#' scripts/forbidden-projec
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 YAMLLINT_IMAGE := pipelinecomponents/yamllint:0.35.27@sha256:f7f7b4f8824839e33690a880dbe20944128b0dc9c55522a0b92a29b3a905cecf
 
-.PHONY: help guard env lint audit config
+.PHONY: help guard env lint audit config test garmin-build garmin-test demo demo-down
 
 # Compose files. Paths inside them are relative to stacks/monitoring/.
 MONITORING := -f stacks/monitoring/compose.yaml
+GARMIN := -f stacks/garmin/compose.garmin.yaml
+DEMO := -f stacks/garmin/demo/compose.demo.yaml
+# Environment file for the demo (default: .env made by scripts/init-env.sh).
+ENV_FILE ?= .env
+PYTHON_IMAGE := python:3.14.2-alpine3.23@sha256:31da4cb527055e4e3d7e9e006dffe9329f84ebea79eaca0a1f1c27ce61e40ca5
 # Validation only ever uses the template, never a real .env.
 CHECK := docker compose -p homelab-check --env-file .env.example
 
@@ -67,6 +72,33 @@ config: ## Validate the Compose files with .env.example (starts nothing)
 	@for profiles in "" pvpc apphealth pvpc,apphealth; do \
 	  COMPOSE_PROFILES=$$profiles $(CHECK) $(MONITORING) config -q || exit 1; \
 	  echo "monitoring ok (profiles: $${profiles:-none})"; done
+	@$(CHECK) $(MONITORING) $(GARMIN) config -q && echo "monitoring + garmin ok"
+	@$(CHECK) $(DEMO) config -q && echo "demo ok"
+	@python3 -I scripts/vendor-dashboard.py --check
+
+test: ## Offline unit tests (price fetcher), no network
+	@docker run --rm --network none --read-only --tmpfs /tmp -e PYTHONDONTWRITEBYTECODE=1 \
+	  -v "$(CURDIR)/stacks/monitoring/price-fetch:/app:ro" -w /app $(PYTHON_IMAGE) \
+	  python3 -m unittest -q test_fetch_price
+
+garmin-build: ## Build the fetcher and one-shot login images (pinned sources)
+	@docker build -q -t msi-homelab/garmin-fetch:2e9ecadb stacks/garmin/fetcher
+	@docker build -q -t msi-homelab/garmin-login:0.3.20 stacks/garmin/login
+
+garmin-test: garmin-build ## Offline tests of the login script and the fetcher wrapper (no network)
+	@docker run --rm --network none --read-only --tmpfs /tmp \
+	  -v "$(CURDIR)/stacks/garmin/tests:/app/tests:ro" --entrypoint python \
+	  msi-homelab/garmin-login:0.3.20 -I /app/tests/test_login.py
+	@stacks/garmin/tests/test-fetcher-wrapper.sh
+
+demo: guard ## Demo with invented data: Grafana on http://127.0.0.1:13300 (needs .env)
+	@test -f "$(ENV_FILE)" || { echo "run scripts/init-env.sh first" >&2; exit 1; }
+	@docker compose -p $(COMPOSE_PROJECT_NAME) --env-file "$(ENV_FILE)" $(DEMO) up -d --wait influxdb-demo grafana-demo
+	@docker compose -p $(COMPOSE_PROJECT_NAME) --env-file "$(ENV_FILE)" $(DEMO) --profile seed run --rm seed-demo
+	@echo "Demo ready: http://127.0.0.1:13300  (folders 'Garmin' and 'Server (MSI)')"
+
+demo-down: guard ## Stop the demo (its data lives in RAM and is gone)
+	@docker compose -p $(COMPOSE_PROJECT_NAME) --env-file "$(ENV_FILE)" $(DEMO) --profile seed down
 
 audit: ## Pre-publication audit of the tree and the whole history
 	@scripts/audit-public.sh --all
