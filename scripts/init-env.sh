@@ -6,7 +6,7 @@
 #
 # What it does:
 #   - new .env: copy of .env.example where every value "change-me" becomes a
-#     random 32-character password;
+#     random 32-character password (128 random bits as lowercase hex);
 #   - existing .env: appends only the keys it does not have yet (new keys get a
 #     random password if their template value is "change-me"); existing lines
 #     are never changed, so a working Grafana password is never replaced;
@@ -23,8 +23,11 @@ target=${1:-"$root/.env"}
 umask 077
 
 random_password() {
-  # 32 characters from [A-Za-z0-9]: safe in .env, YAML and URLs, no quoting.
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+  # 16 random bytes as 32 lowercase hex characters ([0-9a-f]): safe in .env,
+  # YAML, URLs and InfluxQL strings, no quoting needed. od reads exactly 16
+  # bytes, so there is no "tr | head" pipe whose writer could hit SIGPIPE
+  # (ignored on some CI runners, where it printed "Broken pipe").
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
 }
 
 tmp=$(mktemp "$(dirname -- "$target")/.env.tmp.XXXXXX")

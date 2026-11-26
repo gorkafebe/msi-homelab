@@ -77,10 +77,11 @@ config: ## Validate the Compose files with .env.example (starts nothing)
 	@$(CHECK) $(DEMO) config -q && echo "demo ok"
 	@python3 -I scripts/vendor-dashboard.py --check
 
-test: ## Offline unit tests (price fetcher), no network
+test: ## Offline tests: price fetcher, init-env.sh (temporary folder only)
 	@docker run --rm --network none --read-only --tmpfs /tmp -e PYTHONDONTWRITEBYTECODE=1 \
 	  -v "$(CURDIR)/stacks/monitoring/price-fetch:/app:ro" -w /app $(PYTHON_IMAGE) \
 	  python3 -m unittest -q test_fetch_price
+	@scripts/test-init-env.sh
 
 garmin-build: ## Build the fetcher and one-shot login images (pinned sources)
 	@docker build -q -t msi-homelab/garmin-fetch:2e9ecadb stacks/garmin/fetcher
