@@ -1,0 +1,104 @@
+# Demo of the Garmin module with INVENTED data: a throwaway InfluxDB, a seeder
+# and a Grafana with both folders ("Server (MSI)" and "Garmin").
+#
+#   make demo COMPOSE_PROJECT_NAME=homelab-dev      (repository root)
+#   -> http://127.0.0.1:13300  (read-only, no login)
+#   make demo-down COMPOSE_PROJECT_NAME=homelab-dev
+#
+# Nothing persists: InfluxDB and Grafana keep their data in tmpfs (RAM), so
+# there are no Docker volumes to clean up, and stopping the demo deletes it.
+# Different ports from the real stack (13300, 18086, 18088), all on 127.0.0.1,
+# so it can run next to it. The "Server (MSI)" dashboard shows data only if a
+# Prometheus is answering on 127.0.0.1:9090 (queries are read-only).
+
+services:
+  influxdb-demo:
+    image: influxdb:1.11.8@sha256:300a2bb2fd9d66c476c4bd7ca3ce6135d485151cce19b605ef7ab2a000fa1845
+    network_mode: host
+    # influxd directly, skipping the image's init script: that script starts a
+    # temporary server on the fixed port 8086, which belongs to the real
+    # module. The seeder creates the database and accounts instead.
+    entrypoint: ["influxd"]
+    environment:
+      INFLUXDB_HTTP_BIND_ADDRESS: 127.0.0.1:18086
+      INFLUXDB_BIND_ADDRESS: 127.0.0.1:18088
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+      INFLUXDB_HTTP_LOG_ENABLED: "false"
+      INFLUXDB_REPORTING_DISABLED: "true"
+      INFLUXDB_DATA_INDEX_VERSION: tsi1
+    tmpfs:
+      # The image runs as uid 1500.
+      - /var/lib/influxdb:uid=1500,gid=1500,mode=0750,size=1g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:18086/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  seed-demo:
+    image: python:3.14.2-alpine3.23@sha256:31da4cb527055e4e3d7e9e006dffe9329f84ebea79eaca0a1f1c27ce61e40ca5
+    network_mode: host
+    user: "65534:65534"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    profiles: [seed]
+    command: ["python3", "-I", "/seed.py", "--url", "http://127.0.0.1:18086", "--days", "365", "--bootstrap"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      INFLUXDB_ADMIN_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD:?run scripts/init-env.sh first}
+      INFLUXDB_WRITE_PASSWORD: ${INFLUXDB_WRITE_PASSWORD:?run scripts/init-env.sh first}
+      INFLUXDB_READ_PASSWORD: ${INFLUXDB_READ_PASSWORD:?run scripts/init-env.sh first}
+    volumes:
+      - ./seed.py:/seed.py:ro
+    depends_on:
+      influxdb-demo:
+        condition: service_healthy
+
+  grafana-demo:
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    network_mode: host
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: "13300"
+      # Read-only demo: anonymous visitors are Viewers, there is no login form.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run scripts/init-env.sh first}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      # Read by the Garmin datasource file.
+      INFLUXDB_PORT: "18086"
+      INFLUXDB_READ_PASSWORD: ${INFLUXDB_READ_PASSWORD:?run scripts/init-env.sh first}
+    tmpfs:
+      # Grafana's database in RAM (image user 472).
+      - /var/lib/grafana:uid=472,gid=0,mode=0770,size=256m
+    volumes:
+      - ../../monitoring/grafana/provisioning/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
+      - ../../monitoring/grafana/provisioning/dashboards/server.yaml:/etc/grafana/provisioning/dashboards/server.yaml:ro
+      - ../../monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ../grafana/datasource-influxdb.yaml:/etc/grafana/provisioning/datasources/garmin-influxdb.yaml:ro
+      - ../grafana/dashboards-garmin.yaml:/etc/grafana/provisioning/dashboards/garmin.yaml:ro
+      - ../dashboards:/etc/grafana/dashboards-garmin:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:13300/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          # Measured: about 500 MiB with the Garmin dashboard open, because its
+          # database lives in RAM (tmpfs counts towards the limit).
+          memory: 768M

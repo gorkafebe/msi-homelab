@@ -139,6 +139,14 @@ services:
       - ../garmin/grafana/datasource-influxdb.yaml:/etc/grafana/provisioning/datasources/garmin-influxdb.yaml:ro
       - ../garmin/grafana/dashboards-garmin.yaml:/etc/grafana/provisioning/dashboards/garmin.yaml:ro
       - ../garmin/dashboards:/etc/grafana/dashboards-garmin:ro
+    deploy:
+      resources:
+        limits:
+          # 512M in the base file. The Garmin dashboard has about 60 panels and
+          # its queries add memory; the demo Grafana reached about 500 MiB
+          # (with its database in RAM). 768M leaves room. Not measured on the
+          # real panel: see docs/GARMIN.md.
+          memory: 768M
 
 volumes:
   # Time series written by the fetcher (health data: stays on this machine).
