@@ -1,0 +1,69 @@
+# Prometheus configuration: WHAT to collect and HOW OFTEN.
+# How LONG data is kept is set with command-line flags in compose.yaml
+# (--storage.tsdb.retention.*), not here.
+
+global:
+  # Ask every target for its metrics every 15 s. Short enough to see a
+  # temperature spike or a download burst, cheap enough for one machine
+  # (~1,300 series from node_exporter).
+  scrape_interval: 15s
+  # Give up on a target that has not answered in 10 s (must be < interval).
+  scrape_timeout: 10s
+
+scrape_configs:
+  # Host metrics from node_exporter (CPU, memory, disk, network, sensors).
+  - job_name: node
+    static_configs:
+      # 127.0.0.1 works because Prometheus also runs on the host network.
+      - targets: ["127.0.0.1:9100"]
+        labels:
+          # A readable name for the dashboard instead of "127.0.0.1:9100".
+          instance: msi
+
+  # CPU / platform energy counters (RAPL) from the root-only exporter.
+  - job_name: rapl
+    static_configs:
+      - targets: ["127.0.0.1:9101"]
+        labels:
+          instance: msi
+    metric_relabel_configs:
+      # Keep only the energy counters and the collector's own status.
+      - source_labels: [__name__]
+        regex: node_rapl_joules_total|node_scrape_collector_success
+        action: keep
+      # intel-rapl-mmio:0 is a second interface to the same package counter.
+      - source_labels: [path]
+        regex: .*intel-rapl-mmio.*
+        action: drop
+      # The path label is redundant with rapl_zone.
+      - regex: path
+        action: labeldrop
+
+  # Health of a web app hosted on this machine, through blackbox_exporter
+  # (optional profile "apphealth"). Every 30 s (not 15): these are real
+  # requests to a production app, kept to the minimum.
+  # The URLs to probe are NOT in this file: they come from
+  # prometheus/targets/apphealth.yml (ignored by git; copy
+  # apphealth.yml.example). No file = no targets = nothing probed.
+  - job_name: app
+    scrape_interval: 30s
+    metrics_path: /probe
+    params:
+      module: [http_health]
+    file_sd_configs:
+      # A glob: when nothing matches, Prometheus logs no error.
+      - files: ["/etc/prometheus/targets/apphealth*.yml"]
+    relabel_configs:
+      # Standard blackbox pattern: the target URL becomes the ?target=
+      # parameter, and Prometheus actually scrapes the exporter.
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+
+  # Prometheus's own health (memory, storage size, scrape durations).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]

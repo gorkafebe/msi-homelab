@@ -1,0 +1,16 @@
+# Tells Grafana to load every dashboard JSON file found in a folder.
+apiVersion: 1
+
+providers:
+  - name: server
+    type: file
+    # Folder shown in the Grafana UI.
+    folder: Server (MSI)
+    # The JSON file in git is the source of truth: UI edits cannot be saved
+    # over it. To change the dashboard, edit the JSON (or "Export > JSON"
+    # from the UI and paste it into the file), then restart Grafana.
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      # Where compose.yaml mounts grafana/dashboards/ inside the container.
+      path: /etc/grafana/dashboards

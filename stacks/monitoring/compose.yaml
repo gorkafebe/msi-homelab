@@ -1,0 +1,302 @@
+# Home-server monitoring: node_exporter -> Prometheus -> Grafana.
+#
+# Development:  make config / make demo COMPOSE_PROJECT_NAME=homelab-dev (repository root)
+# Production:   docker compose -p msi-monitor --env-file ../../.env up -d   (this folder;
+#               see docs/runbook/13-monitoring.md). The volume KEYS below
+#               (prometheus-data, grafana-data, textfile-gen) are kept identical to
+#               the original deployment so that, under the same project name, the
+#               existing metric history and Grafana database are reused.
+#
+# Optional services are Compose profiles, off unless COMPOSE_PROFILES lists them:
+#   pvpc       electricity price fetcher (talks to a public API)
+#   apphealth  HTTP probe of a local web app (targets in prometheus/targets/)
+# With both profiles on, this file runs the same 7 services as the original.
+#
+# Networking rule for this whole file: every service uses the HOST network
+# (network_mode: host) and binds itself to 127.0.0.1 with its own flag.
+# Why: ports published with "ports:" bypass ufw. With host networking Docker
+# publishes nothing; the only thing deciding where a service listens is the
+# address we pass to it below, and 127.0.0.1 is unreachable from other machines.
+# "ports:" is ignored in host mode, so there is deliberately none in this file.
+
+services:
+  node-exporter:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    restart: unless-stopped
+    # Host network: sees the real enp4s0/wlo1 interfaces, not a container's.
+    network_mode: host
+    # Host PID namespace: sees the host's processes (load, process counts).
+    pid: host
+    command:
+      # Read /proc, /sys and filesystems of the host through the /host mount.
+      - --path.rootfs=/host
+      # udev data (disk model/serial labels) is not under rootfs automatically;
+      # without this the diskstats collector logs an error at every start.
+      - --path.udev.data=/host/run/udev/data
+      # Loopback only: reachable from this machine (Prometheus), not the LAN.
+      - --web.listen-address=127.0.0.1:9100
+      # Skip veth* interfaces: Docker creates a new one for every container
+      # on a bridge network. Each would become short-lived series in Prometheus.
+      - --collector.netdev.device-exclude=^veth.*$$
+      - --collector.netclass.ignored-devices=^veth.*$$
+      # Extra metrics from *.prom text files (textfile collector), two folders:
+      # 1) /textfile-gen: written every 15-60 s by the textfile-gen and
+      #    price-fetch containers (GPU power state, fans, thresholds, updates,
+      #    electricity price...). A tmpfs volume: nothing touches the disk.
+      - --collector.textfile.directory=/textfile-gen
+      # 2) /textfile-host: TEXTFILE_HOST_DIR on the host (default ./textfile),
+      #    written by the owner's tools without sudo: bin/mark-experiment
+      #    (experiment marks) and the backup status file.
+      - --collector.textfile.directory=/textfile-host
+    volumes:
+      # Whole host filesystem, read-only. rslave lets mounts made later on the
+      # host (e.g. a USB disk) appear inside the container too.
+      - /:/host:ro,rslave
+      - textfile-gen:/textfile-gen:ro
+      - ${TEXTFILE_HOST_DIR:-./textfile}:/textfile-host:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9100/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          # Typically uses ~15-30 MB; 128 MB stops a runaway without risk.
+          memory: 128M
+
+  # Second node_exporter that reads ONLY the CPU energy counters (RAPL).
+  # Why a separate container running as root: since kernel 5.10 the files
+  # /sys/class/powercap/intel-rapl*/energy_uj are mode 0400 root (PLATYPUS,
+  # CVE-2020-8694), and the main node_exporter runs as "nobody" with the whole
+  # host filesystem mounted. Root here reads them as their owner, without any
+  # capability (cap_drop ALL), with a read-only container, and it sees only /sys
+  # (read-only): no /etc, /home or /srv. Nothing on the host was changed.
+  node-exporter-rapl:
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --path.sysfs=/host/sys
+      - --web.listen-address=127.0.0.1:9101
+      # Only the rapl collector; everything else is the main node_exporter's job.
+      - --collector.disable-defaults
+      - --collector.rapl
+      # Adds rapl_zone="package|core|uncore|psys" to each counter.
+      - --collector.rapl.enable-zone-label
+    volumes:
+      - /sys:/host/sys:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9101/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
+  # Writes host facts that node_exporter does not export (GPU runtime power
+  # state, EC fans, charge thresholds, throttling, updates, default route) to
+  # a .prom file every 15 s. Script: textfile-gen/collect.sh (POSIX sh).
+  textfile-gen:
+    image: busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    restart: unless-stopped
+    # Host network only so /proc/net/route shows the host's routes. It listens
+    # on nothing and makes no network requests.
+    network_mode: host
+    user: "65534:65534"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    command: ["sh", "/collect.sh"]
+    volumes:
+      - ./textfile-gen/collect.sh:/collect.sh:ro
+      - /sys:/host/sys:ro
+      # Only /run/reboot-required is read. User 65534 cannot use the sockets
+      # in /run (docker.sock is root:docker 0660), and the mount is read-only.
+      - /run:/host/run:ro
+      # A folder, not the file: update-notifier replaces the file daily.
+      - /var/lib/update-notifier:/host/update-notifier:ro
+      - textfile-gen:/out
+    healthcheck:
+      # Healthy while the file is younger than 1 minute.
+      test: ["CMD-SHELL", "find /out/msi.prom -mmin -1 | grep -q ."]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 16M
+
+  # Electricity price (PVPC and spot) from Red Eléctrica's public API, every
+  # 15 min; the current hour's price is recomputed every minute.
+  # The ONLY service here that talks to the internet: an HTTPS GET with the
+  # dates, nothing about this machine. Default Docker bridge network: it
+  # cannot reach anything listening on the host's 127.0.0.1.
+  price-fetch:
+    image: python:3.14.2-alpine3.23@sha256:31da4cb527055e4e3d7e9e006dffe9329f84ebea79eaca0a1f1c27ce61e40ca5
+    # Optional: COMPOSE_PROFILES=pvpc. Without it the price panels say "No data".
+    profiles: [pvpc]
+    restart: unless-stopped
+    network_mode: bridge
+    user: "65534:65534"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    command: ["python3", "-I", "/app/fetch_price.py"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./price-fetch/fetch_price.py:/app/fetch_price.py:ro
+      - textfile-gen:/out
+    healthcheck:
+      # Healthy while the file is younger than 3 minutes (it is rewritten every
+      # minute even when the API fails; the failure is a metric, not a crash).
+      test: ["CMD", "python3", "-I", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/out/price.prom')>180)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 48M
+
+  # Probes the health endpoint(s) of a web app hosted on this machine (GET
+  # only) when Prometheus asks, every 30 s. Read-only, unprivileged, loopback
+  # only. Optional: COMPOSE_PROFILES=apphealth, plus a targets file in
+  # prometheus/targets/ (see apphealth.yml.example).
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.29.0@sha256:9613f2884689b6fad9f1939f6a3b0388c93a022cfaededb19545b329b5c83dea
+    profiles: [apphealth]
+    restart: unless-stopped
+    network_mode: host
+    user: "65534:65534"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+      - --web.listen-address=127.0.0.1:9115
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9115/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Loopback only. Prometheus has no login, so it must never face the LAN.
+      - --web.listen-address=127.0.0.1:9090
+      # Keep at most 30 days of history; older data is deleted automatically.
+      - --storage.tsdb.retention.time=30d
+      # ...and never more than 10 GB on disk, whichever limit is hit first.
+      # If 10 GB is reached before 30 days, the OLDEST data is deleted first.
+      - --storage.tsdb.retention.size=10GB
+    volumes:
+      # Our config and the optional file_sd targets, read-only: the container
+      # cannot modify the repository.
+      - ./prometheus:/etc/prometheus:ro
+      # Named volume: the metric history survives "docker compose down".
+      - prometheus-data:/prometheus
+    depends_on:
+      node-exporter:
+        condition: service_healthy
+    healthcheck:
+      # /-/healthy is Prometheus's built-in health endpoint.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          # Expected use is ~100-300 MB for this small setup. 1 GB leaves room
+          # for heavy dashboard queries; if exceeded, Docker kills and restarts
+          # it instead of letting it squeeze the rest of the machine.
+          memory: 1G
+
+  grafana:
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Loopback only. Grafana's default is ALL interfaces, so this is critical.
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SECURITY_ADMIN_USER: admin
+      # Read from .env (not in git). ":?" makes Compose stop with this message
+      # instead of starting Grafana with an empty password.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?create .env from .env.example first}
+      # Only the admin account exists; nobody can create a new one.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # No access without logging in.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Below: stop Grafana from contacting the internet on its own.
+      # Usage statistics sent to Grafana Labs:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      # Checks for new Grafana / plugin versions (we pin and update by hand):
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      # Profile pictures fetched from gravatar.com:
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      # News feed fetched from grafana.com on the home page:
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Automatic plugin downloads at startup (we need only built-in plugins):
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      # Grafana's own database (users, preferences). Survives "down".
+      - grafana-data:/var/lib/grafana
+      # Datasource + dashboard provider definitions, read-only.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # The dashboard JSON files, read-only.
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      # /api/health answers without login when the web server and DB are OK.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          # Expected use is ~100-200 MB with one user. 512 MB caps it.
+          memory: 512M
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  # Shared by textfile-gen and price-fetch (write) and node-exporter (read).
+  # tmpfs: lives in RAM (1 MB max), owned by the unprivileged user 65534, gone
+  # at reboot and rewritten within seconds.
+  textfile-gen:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65534,gid=65534,mode=0755,size=1m"

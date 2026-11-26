@@ -1,0 +1,5 @@
+# Targets for the optional "apphealth" probe (Prometheus file_sd format).
+# Copy this file to apphealth.yml (ignored by git) and list the health URLs
+# of the web app hosted on this machine. Prometheus re-reads it by itself.
+- targets:
+    - http://127.0.0.1/health

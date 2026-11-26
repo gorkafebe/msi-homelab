@@ -1,0 +1,20 @@
+# Grafana reads this file at startup and creates the Prometheus datasource,
+# so nothing has to be configured by hand in the web UI.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Fixed uid so the dashboard JSON can refer to this exact datasource.
+    uid: prometheus
+    # "proxy": the Grafana server (not your browser) talks to Prometheus.
+    # That is why 127.0.0.1 works even when you browse from another computer.
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    # Changes must be made in this file, not in the UI.
+    editable: false
+    jsonData:
+      # Must match scrape_interval in prometheus/prometheus.yml; Grafana uses
+      # it to choose sensible rate() windows ($__rate_interval).
+      timeInterval: 15s

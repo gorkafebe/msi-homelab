@@ -34,7 +34,7 @@ stacks/monitoring/textfile/*
 !stacks/monitoring/textfile/.gitkeep
 # Prometheus file_sd targets for the optional app-health probe (real URLs).
 stacks/monitoring/prometheus/targets/*.yml
-!stacks/monitoring/prometheus/targets/*.example.yml
+!stacks/monitoring/prometheus/targets/*.yml.example
 
 # --- Editors and tools ---------------------------------------------------
 # Vim swap files can hold a full copy of .env, password included.
