@@ -25,7 +25,12 @@ FORBIDDEN_PROJECTS := msi-monitor $(shell grep -v '^\#' scripts/forbidden-projec
 SHELLCHECK_IMAGE := koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
 YAMLLINT_IMAGE := pipelinecomponents/yamllint:0.35.27@sha256:f7f7b4f8824839e33690a880dbe20944128b0dc9c55522a0b92a29b3a905cecf
 
-.PHONY: help guard env lint audit
+.PHONY: help guard env lint audit config
+
+# Compose files. Paths inside them are relative to stacks/monitoring/.
+MONITORING := -f stacks/monitoring/compose.yaml
+# Validation only ever uses the template, never a real .env.
+CHECK := docker compose -p homelab-check --env-file .env.example
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -52,11 +57,16 @@ env: ## Create or complete .env with random passwords (prints no values)
 
 lint: ## ShellCheck, yamllint and JSON syntax (pinned images, no network)
 	@docker run --rm --network none -v "$(CURDIR):/src:ro" -w /src $(SHELLCHECK_IMAGE) \
-	  $$(git ls-files '*.sh')
+	  $$(git ls-files '*.sh' 'stacks/*/bin/*')
 	@docker run --rm --network none -v "$(CURDIR):/src:ro" -w /src $(YAMLLINT_IMAGE) \
 	  yamllint -c .yamllint.yml .
 	@git ls-files '*.json' | while read -r f; do jq empty "$$f" || exit 1; done
 	@echo "lint ok"
+
+config: ## Validate the Compose files with .env.example (starts nothing)
+	@for profiles in "" pvpc apphealth pvpc,apphealth; do \
+	  COMPOSE_PROFILES=$$profiles $(CHECK) $(MONITORING) config -q || exit 1; \
+	  echo "monitoring ok (profiles: $${profiles:-none})"; done
 
 audit: ## Pre-publication audit of the tree and the whole history
 	@scripts/audit-public.sh --all
