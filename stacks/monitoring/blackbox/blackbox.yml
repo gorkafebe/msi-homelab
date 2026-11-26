@@ -1,0 +1,15 @@
+# blackbox_exporter: asks the Sound Archive app "are you healthy?" like a
+# visitor would, and turns the answer into metrics (probe_success, duration,
+# HTTP status). Prometheus decides WHICH addresses (job "app" in
+# prometheus.yml); this file decides HOW to ask.
+modules:
+  http_health:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      # Only a 2xx answer counts as "up".
+      valid_status_codes: []
+      preferred_ip_protocol: ip4
+      # The app is on this same machine; never follow a redirect elsewhere.
+      no_follow_redirects: true

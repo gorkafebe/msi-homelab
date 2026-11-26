@@ -1,0 +1,48 @@
+#!/bin/sh
+# mark-experiment: leave a mark in the dashboard ("I changed X now").
+#
+#   bin/mark-experiment "A: unplugged, GPU auto"
+#   bin/mark-experiment --list
+#
+# No Grafana password and no sudo: it writes $TEXTFILE_HOST_DIR/experiments.prom
+# (default: stacks/monitoring/textfile/),
+# which node_exporter reads (textfile collector). Each mark appears as a vertical
+# line with its text on every time-series panel (annotation "Experiments").
+# It keeps the last 20 marks in the metrics; the full history stays in
+# textfile/experiments.log (tab-separated: Unix time, UTC time, text).
+
+set -eu
+
+dir="${TEXTFILE_HOST_DIR:-$(cd "$(dirname "$0")/.." && pwd)/textfile}"
+log="$dir/experiments.log"
+prom="$dir/experiments.prom"
+keep=20
+
+if [ "${1:-}" = "--list" ]; then
+    [ -f "$log" ] && cat "$log" || echo "(no marks yet)"
+    exit 0
+fi
+if [ $# -ne 1 ] || [ -z "$1" ]; then
+    echo "usage: $0 \"text of the mark\"   |   $0 --list" >&2
+    exit 2
+fi
+
+# Prometheus label values: drop quotes, backslashes and control characters; max 100 chars.
+text="$(printf '%s' "$1" | tr -d "\"\\\\" | tr '[:cntrl:]' ' ' | cut -c1-100)"
+now="$(date +%s)"
+
+mkdir -p "$dir"
+printf '%s\t%s\t%s\n' "$now" "$(date -u -d "@$now" +%FT%TZ)" "$text" >> "$log"
+
+tmp="$prom.tmp"
+{
+    echo "# HELP msi_experiment_timestamp_seconds When an experiment mark was made (Unix time); the label text says what changed."
+    echo "# TYPE msi_experiment_timestamp_seconds gauge"
+    # id = line number in the whole log: stable for a mark, unique even for two marks in one second.
+    awk -F "\t" -v keep="$keep" '{t[NR] = $1; x[NR] = $3}
+        END {for (i = (NR > keep ? NR - keep + 1 : 1); i <= NR; i++)
+            printf "msi_experiment_timestamp_seconds{id=\"%d\",text=\"%s\"} %s\n", i, x[i], t[i]}' "$log"
+} > "$tmp"
+chmod 644 "$tmp"
+mv "$tmp" "$prom"
+echo "marked at $(date -u -d "@$now" +%FT%TZ): $text"
