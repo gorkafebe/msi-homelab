@@ -1,0 +1,24 @@
+# Garmin module: the InfluxDB datasource, provisioned (nothing to set up in the UI).
+# Mounted by stacks/garmin/compose.garmin.yaml into Grafana's provisioning folder.
+apiVersion: 1
+
+datasources:
+  - name: Garmin InfluxDB
+    # Fixed uid: the Garmin dashboard refers to exactly this datasource
+    # (scripts/vendor-dashboard.py writes it into every panel and query).
+    uid: garmin-influxdb
+    type: influxdb
+    # Grafana's server (not the browser) talks to InfluxDB on loopback.
+    access: proxy
+    # $VAR is read from Grafana's environment (set in compose.garmin.yaml).
+    url: http://127.0.0.1:$INFLUXDB_PORT
+    # The READ-ONLY account: Grafana can query, never write or delete.
+    user: garmin_reader
+    jsonData:
+      version: InfluxQL
+      dbName: GarminStats
+      httpMode: GET
+    secureJsonData:
+      password: $INFLUXDB_READ_PASSWORD
+    isDefault: false
+    editable: false

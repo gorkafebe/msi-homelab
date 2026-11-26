@@ -1,0 +1,147 @@
+# Optional Garmin module: InfluxDB + the garmin-grafana fetcher, added to the
+# monitoring stack's single Grafana (same port, a second folder "Garmin").
+#
+# Always used ON TOP of the monitoring file, never alone:
+#   docker compose -f stacks/monitoring/compose.yaml -f stacks/garmin/compose.garmin.yaml ...
+# Relative paths below are therefore relative to stacks/monitoring/ (the
+# folder of the first file), hence the ../garmin/ prefix.
+#
+# Without this file the monitoring stack works exactly as before.
+#
+# Health data never leaves the machine: InfluxDB and Grafana listen on
+# 127.0.0.1 only; the only outbound traffic is the fetcher talking to Garmin
+# with session tokens (and the one-shot login container, run by hand once).
+# Details and threat model: docs/GARMIN.md, docs/SECURITY.md.
+
+services:
+  influxdb:
+    image: influxdb:1.11.8@sha256:300a2bb2fd9d66c476c4bd7ca3ce6135d485151cce19b605ef7ab2a000fa1845
+    restart: unless-stopped
+    # Host network like the rest of the stack, with every listener bound to
+    # 127.0.0.1 by its own setting (no "ports:", which would bypass ufw).
+    network_mode: host
+    environment:
+      # HTTP API (queries and writes): loopback only.
+      INFLUXDB_HTTP_BIND_ADDRESS: 127.0.0.1:${INFLUXDB_PORT:-8086}
+      # Backup/restore RPC service: listens on all interfaces by default
+      # (port 8088). Loopback only here.
+      INFLUXDB_BIND_ADDRESS: 127.0.0.1:${INFLUXDB_RPC_PORT:-8088}
+      # Every request must carry a user and password.
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+      # The HTTP access log would record query strings, and the Python client
+      # sends the password as a query parameter: keep it off.
+      INFLUXDB_HTTP_LOG_ENABLED: "false"
+      # No usage statistics to InfluxData.
+      INFLUXDB_REPORTING_DISABLED: "true"
+      INFLUXDB_DATA_INDEX_VERSION: tsi1
+      # First start of an EMPTY volume only: create the database and three
+      # accounts. Changing these later has no effect on an existing database.
+      INFLUXDB_DB: GarminStats
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD:?run scripts/init-env.sh first}
+      INFLUXDB_WRITE_USER: garmin_writer
+      INFLUXDB_WRITE_USER_PASSWORD: ${INFLUXDB_WRITE_PASSWORD:?run scripts/init-env.sh first}
+      INFLUXDB_READ_USER: garmin_reader
+      INFLUXDB_READ_USER_PASSWORD: ${INFLUXDB_READ_PASSWORD:?run scripts/init-env.sh first}
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+    healthcheck:
+      # /ping answers without a login.
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:${INFLUXDB_PORT:-8086}/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  garmin-fetch:
+    # Built locally from the pinned upstream commit (stacks/garmin/fetcher/).
+    build: ../garmin/fetcher
+    image: msi-homelab/garmin-fetch:2e9ecadb
+    pull_policy: build
+    restart: unless-stopped
+    # Needs the internet (Garmin) and InfluxDB on 127.0.0.1. Host network is
+    # the simplest way to have both; trade-off in docs/SECURITY.md.
+    network_mode: host
+    user: "1000:1000"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m
+    # No terminal and no stdin: if the upstream code ever asks for an e-mail or
+    # password, it gets end-of-file and stops instead of waiting.
+    stdin_open: false
+    tty: false
+    environment:
+      INFLUXDB_HOST: 127.0.0.1
+      INFLUXDB_PORT: ${INFLUXDB_PORT:-8086}
+      INFLUXDB_USERNAME: garmin_writer
+      INFLUXDB_PASSWORD: ${INFLUXDB_WRITE_PASSWORD:?run scripts/init-env.sh first}
+      INFLUXDB_DATABASE: GarminStats
+      TOKEN_DIR: /home/appuser/.garminconnect
+      USER_TIMEZONE: ${GARMIN_USER_TIMEZONE:-UTC}
+      # Never tag data with the account's name, never keep FIT/TCX copies.
+      TAG_MEASUREMENTS_WITH_USER_EMAIL: "False"
+      KEEP_FIT_FILES: "False"
+      UPDATE_INTERVAL_SECONDS: "300"
+      LOG_LEVEL: INFO
+      # Deliberately absent: GARMINCONNECT_EMAIL, GARMINCONNECT_BASE64_PASSWORD.
+      # The wrapper also unsets them in case they are ever added here.
+    volumes:
+      - garmin-tokens:/home/appuser/.garminconnect
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    healthcheck:
+      # Unhealthy while the wrapper holds (no tokens, or a previous stop).
+      test: ["CMD", "sh", "-c", "test ! -f /tmp/hold-reason"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  # One-shot FIRST login, run by hand once (docs/GARMIN.md). Not started by
+  # "up": it only runs with --profile garmin-login and "run".
+  garmin-login:
+    build: ../garmin/login
+    image: msi-homelab/garmin-login:0.3.20
+    pull_policy: build
+    profiles: [garmin-login]
+    restart: "no"
+    # Default bridge network: it can reach Garmin, not the host's loopback.
+    network_mode: bridge
+    user: "1000:1000"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m
+    stdin_open: true
+    tty: true
+    volumes:
+      - garmin-tokens:/tokens
+
+  # The single Grafana of the monitoring stack gets the InfluxDB datasource
+  # and the "Garmin" folder. Compose merges these lists with the base file.
+  grafana:
+    environment:
+      INFLUXDB_PORT: ${INFLUXDB_PORT:-8086}
+      INFLUXDB_READ_PASSWORD: ${INFLUXDB_READ_PASSWORD:?run scripts/init-env.sh first}
+    volumes:
+      - ../garmin/grafana/datasource-influxdb.yaml:/etc/grafana/provisioning/datasources/garmin-influxdb.yaml:ro
+      - ../garmin/grafana/dashboards-garmin.yaml:/etc/grafana/provisioning/dashboards/garmin.yaml:ro
+      - ../garmin/dashboards:/etc/grafana/dashboards-garmin:ro
+
+volumes:
+  # Time series written by the fetcher (health data: stays on this machine).
+  influxdb-data:
+  # garmin_tokens.json (session tokens) and the fetcher's hold marker.
+  garmin-tokens:
