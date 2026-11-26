@@ -112,7 +112,7 @@ scan_pattern "e-mail address" \
 # ------------------------------------------- 3. files never to be tracked
 echo "== 3. forbidden files"
 if [ "$mode" != --history ]; then
-  forbidden=$(git ls-files -co --exclude-standard | grep -E '(^|/)(\.env|garmin_tokens\.json|AUTH_FAILED|audit-denylist\.local)$|\.swp$' || true)
+  forbidden=$(git ls-files -co --exclude-standard | grep -E '(^|/)(\.env|garmin_tokens\.json|AUTH_FAILED|audit-denylist\.local|forbidden-projects\.local)$|\.swp$' || true)
   [ -n "$forbidden" ] && bad "forbidden files present (tracked or not ignored): $forbidden"
 fi
 if git rev-parse -q --verify HEAD >/dev/null; then
