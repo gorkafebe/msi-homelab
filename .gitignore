@@ -1,0 +1,49 @@
+# --- Secrets -------------------------------------------------------------
+# Real environment files hold passwords. Only *.example templates are tracked.
+.env
+.env.*
+!.env.example
+**/.env
+!**/.env.example
+
+# Garmin session tokens (they grant access to the account). Never commit them.
+garmin_tokens.json
+**/garminconnect-tokens/
+**/.garminconnect/
+AUTH_FAILED
+
+# Local denylist used by scripts/audit-public.sh: it contains the real values
+# (host name, addresses...) that must never be published.
+scripts/audit-denylist.local
+
+# --- Data ----------------------------------------------------------------
+# Docker named volumes live under /var/lib/docker, but bind-mounted data or
+# exports must not end up here either.
+data/
+volumes/
+backups/
+*.tar
+*.tar.gz
+*.fit
+*.FIT
+*.zip
+# Host-side textfile collector output (experiment marks, backup status).
+stacks/monitoring/textfile/*
+!stacks/monitoring/textfile/.gitkeep
+# Prometheus file_sd targets for the optional app-health probe (real URLs).
+stacks/monitoring/prometheus/targets/*.yml
+!stacks/monitoring/prometheus/targets/*.example.yml
+
+# --- Editors and tools ---------------------------------------------------
+# Vim swap files can hold a full copy of .env, password included.
+*.swp
+*.swo
+.*.swp
+*~
+.vscode/
+.idea/
+.claude/
+__pycache__/
+*.pyc
+# Screenshot work area (only reviewed images go to docs/images/).
+.screenshots/
