@@ -1,0 +1,4 @@
+# Reviewed exceptions for scripts/audit-public.sh: exact strings that match an
+# address pattern but are invented examples. One per line, then "# reason".
+# Never put a real address, name or identifier here.
+fd12:3456::42   # invented example in the message of commit 757b0c8 (audit IPv6 fix); not a real address

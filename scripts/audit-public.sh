@@ -82,10 +82,16 @@ fi
 
 # ------------------------------------------------- 2. generic patterns
 echo "== 2. addresses, names and e-mails"
+# Reviewed exceptions: exact strings that look like an address but are known
+# to be invented examples (one per line in scripts/audit-allowlist.txt, each
+# with a comment saying why). Kept short on purpose.
+allowlist="$root/scripts/audit-allowlist.txt"
+grep -v -e '^#' -e '^[[:space:]]*$' "$allowlist" 2>/dev/null | sed 's/[[:space:]]*#.*$//' >"$work/allow" || true
 scan_pattern() {
   # $1 = label, $2 = extended regex, $3 = allow regex (matches to ignore)
   grep -r -I -n -o -E -e "$2" "$work/scan" 2>/dev/null \
     | { if [ -n "$3" ]; then grep -v -E -e "$3"; else cat; fi; } \
+    | { if [ -s "$work/allow" ]; then grep -v -F -f "$work/allow"; else cat; fi; } \
     | cut -d: -f1,2 | sed "s#^$work/scan/##" | sort -u >"$work/hits" || true
   if [ -s "$work/hits" ]; then
     bad "$1 at:"
