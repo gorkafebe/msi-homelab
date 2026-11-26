@@ -32,6 +32,10 @@ the public Certificate Transparency logs.
    sudo tailscale serve --bg --http=3000 http://127.0.0.1:3000
    ```
 
+   (Not verified: the exact command used on this machine was not recorded,
+   and the `serve` syntax has changed between Tailscale versions; check
+   `tailscale serve --help` and confirm the result with `tailscale serve status`.)
+
 3. **Never** use `tailscale funnel` for the panel: funnel publishes on the
    public internet.
 4. In the Tailscale admin console, review the access rules (ACLs) and the
